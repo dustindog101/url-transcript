@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+build/
+.venv/
+venv/
+.deps/
+transcripts/*
+!transcripts/.gitkeep
+.DS_Store
+*.m4a
+*.wav
+.cache/
