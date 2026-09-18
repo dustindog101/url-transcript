@@ -14,3 +14,5 @@ transcripts/*
 *.wav
 .cache/
 .venv
+.smoke-err.txt
+smoke-results.txt
