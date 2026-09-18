@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
-from dataclasses import dataclass
+import tempfile
 from pathlib import Path
 from shutil import which
 
@@ -37,7 +38,6 @@ def resolve_whisper_cli() -> Path | None:
         w = which(name)
         if w:
             return Path(w)
-    # Homebrew locations
     for c in (
         Path("/opt/homebrew/bin/whisper-cli"),
         Path("/usr/local/bin/whisper-cli"),
@@ -50,6 +50,65 @@ def resolve_whisper_cli() -> Path | None:
 def model_present() -> bool:
     p = Path(os.environ.get("WHISPER_MODEL", default_whisper_model()))
     return p.is_file() and p.stat().st_size > 1024
+
+
+_NOISE = re.compile(
+    r"^(load_backend:|ggml_|whisper_|system_info|main:|error:|read_audio_data:|"
+    r"output_txt:|whisper_init|log_mel|metal_|MTL0)",
+    re.I,
+)
+
+
+def _clean_transcript(raw: str) -> str:
+    lines: list[str] = []
+    for line in raw.splitlines():
+        s = line.strip()
+        if not s:
+            continue
+        if _NOISE.match(s):
+            continue
+        # whisper sometimes prefixes speaker turns with >>
+        if s.startswith(">>"):
+            s = s[2:].strip()
+        lines.append(s)
+    text = "\n".join(lines).strip()
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text
+
+
+def _to_wav16k(audio_path: Path) -> Path:
+    """Convert any ffmpeg-readable audio to 16 kHz mono WAV for whisper-cli."""
+    ffmpeg = which("ffmpeg")
+    if not ffmpeg:
+        raise WhisperError("ffmpeg not found (needed to convert audio for whisper-cli)")
+    fd, tmp = tempfile.mkstemp(suffix=".wav", prefix="ut-whisper-")
+    os.close(fd)
+    out = Path(tmp)
+    proc = subprocess.run(
+        [
+            ffmpeg,
+            "-y",
+            "-i",
+            str(audio_path),
+            "-ar",
+            "16000",
+            "-ac",
+            "1",
+            "-c:a",
+            "pcm_s16le",
+            str(out),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=300,
+        check=False,
+    )
+    if proc.returncode != 0 or not out.is_file() or out.stat().st_size < 44:
+        out.unlink(missing_ok=True)
+        raise WhisperError(
+            f"ffmpeg convert failed:\n{(proc.stderr or proc.stdout or '')[-1500:]}"
+        )
+    return out
 
 
 def transcribe(
@@ -70,41 +129,66 @@ def transcribe(
             "Place ggml-small-q8_0.bin there or set WHISPER_MODEL."
         )
 
-    # whisper-cli typical: whisper-cli -m model -f audio -nt (no timestamps)
-    cmd = [str(binary), "-m", str(model), "-f", str(audio_path), "-nt", "-np"]
+    wav: Path | None = None
+    out_base: Path | None = None
     try:
-        proc = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            check=False,
+        wav = _to_wav16k(audio_path)
+        fd, tmp_base = tempfile.mkstemp(prefix="ut-wout-")
+        os.close(fd)
+        out_base = Path(tmp_base)
+        out_base.unlink(missing_ok=True)  # whisper adds .txt
+
+        # -nt no timestamps, -np no prints (except results), -otxt write .txt
+        cmd = [
+            str(binary),
+            "-m",
+            str(model),
+            "-f",
+            str(wav),
+            "-nt",
+            "-np",
+            "-otxt",
+            "-of",
+            str(out_base),
+        ]
+        try:
+            proc = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as e:
+            raise WhisperError(f"whisper-cli timed out after {timeout}s") from e
+        except OSError as e:
+            raise WhisperError(f"Failed to run whisper-cli: {e}") from e
+
+        txt_path = Path(str(out_base) + ".txt")
+        raw = ""
+        if txt_path.is_file():
+            raw = txt_path.read_text(encoding="utf-8", errors="replace")
+            txt_path.unlink(missing_ok=True)
+        if not raw.strip():
+            raw = (proc.stdout or "") + "\n" + (proc.stderr or "")
+
+        text = _clean_transcript(raw)
+        if proc.returncode != 0 and not text:
+            raise WhisperError(
+                f"whisper-cli failed (exit {proc.returncode}):\n"
+                f"{(proc.stderr or proc.stdout or '')[-2000:]}"
+            )
+        if not text:
+            raise WhisperError("whisper-cli returned empty transcript")
+
+        return AsrResult(
+            text=text,
+            engine="whisper",
+            model_version="ggml-small-q8_0",
+            binary=str(binary),
         )
-    except subprocess.TimeoutExpired as e:
-        raise WhisperError(f"whisper-cli timed out after {timeout}s") from e
-    except OSError as e:
-        raise WhisperError(f"Failed to run whisper-cli: {e}") from e
-
-    text = (proc.stdout or "").strip()
-    if not text:
-        # some builds print to stderr
-        text = (proc.stderr or "").strip()
-    # Drop common banner lines
-    cleaned_lines = []
-    for line in text.splitlines():
-        s = line.strip()
-        if not s:
-            continue
-        if s.startswith("whisper_") or s.startswith("ggml_") or s.lower().startswith("system_info"):
-            continue
-        cleaned_lines.append(line)
-    text = "\n".join(cleaned_lines).strip()
-
-    if proc.returncode != 0 and not text:
-        raise WhisperError(
-            f"whisper-cli failed (exit {proc.returncode}):\n{(proc.stderr or proc.stdout or '')[-2000:]}"
-        )
-    if not text:
-        raise WhisperError("whisper-cli returned empty transcript")
-
-    return AsrResult(text=text, engine="whisper", model_version="ggml-small-q8_0", binary=str(binary))
+    finally:
+        if wav is not None:
+            wav.unlink(missing_ok=True)
+        if out_base is not None:
+            Path(str(out_base) + ".txt").unlink(missing_ok=True)

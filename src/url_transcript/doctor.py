@@ -37,7 +37,7 @@ def run_checks() -> list[Check]:
         Check("yt-dlp", yt is not None, yt or "missing — brew install yt-dlp", required=True)
     )
 
-    # FluidAudio binary
+    # FluidAudio binary (primary ASR; optional if whisper fallback is ready)
     fa = asr_parakeet.resolve_fluidaudio_bin()
     checks.append(
         Check(
@@ -46,7 +46,7 @@ def run_checks() -> list[Check]:
             str(fa)
             if fa
             else "missing — clone FluidInference/FluidAudio && swift build -c release; or set FLUIDAUDIO_BIN",
-            required=True,
+            required=False,
         )
     )
 
@@ -59,7 +59,7 @@ def run_checks() -> list[Check]:
             str(asr_parakeet.default_model_dir("v3"))
             if m3
             else f"missing at {asr_parakeet.default_model_dir('v3')} (VoiceInk / FluidAudio cache)",
-            required=True,
+            required=False,
         )
     )
 
@@ -73,14 +73,15 @@ def run_checks() -> list[Check]:
         )
     )
 
-    # whisper fallback
+    # whisper fallback — required when FluidAudio CLI is missing
+    need_whisper = fa is None
     wcli = asr_whisper.resolve_whisper_cli()
     checks.append(
         Check(
             "whisper-cli",
             wcli is not None,
-            str(wcli) if wcli else "optional fallback — brew install whisper-cpp",
-            required=False,
+            str(wcli) if wcli else "brew install whisper-cpp (needed without FluidAudio)",
+            required=need_whisper,
         )
     )
     wm = asr_whisper.model_present()
@@ -90,8 +91,8 @@ def run_checks() -> list[Check]:
             wm,
             str(asr_whisper.default_whisper_model())
             if wm
-            else f"optional — expected {asr_whisper.default_whisper_model()}",
-            required=False,
+            else f"expected {asr_whisper.default_whisper_model()}",
+            required=need_whisper,
         )
     )
 

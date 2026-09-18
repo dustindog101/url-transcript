@@ -13,3 +13,4 @@ transcripts/*
 *.m4a
 *.wav
 .cache/
+.venv

@@ -1,19 +1,31 @@
 #!/usr/bin/env bash
-# Parent: after CopyFromBox of the project (or tar extract) to
-#   /Users/king/Desktop/school files/tools/url-transcript/
-# run this ON the Mac (Shell machineId a3c2a22a-00dc-4cc2-8adf-26657de9a0d5).
+# Finish install + smoke + GitHub on the Mac.
+# Env: SKIP_FLUIDAUDIO=1 to skip FluidAudio build (whisper-only).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
 
-echo "==== bootstrap FluidAudio + install ===="
-./bootstrap-mac.sh
+if [[ "${SKIP_FLUIDAUDIO:-}" == "1" ]]; then
+  echo "==== skip FluidAudio; whisper-only ===="
+  if ! command -v whisper-cli >/dev/null 2>&1; then
+    brew install whisper-cpp
+  fi
+  ./install-cli.sh
+else
+  echo "==== bootstrap FluidAudio + install ===="
+  ./bootstrap-mac.sh
+fi
 
 export PATH="$HOME/.local/bin:$PATH"
 if [[ -x "$HOME/Developer/FluidAudio/.build/release/fluidaudiocli" ]]; then
   export FLUIDAUDIO_BIN="$HOME/Developer/FluidAudio/.build/release/fluidaudiocli"
 elif [[ -x "$HOME/Developer/FluidAudio/.build/release/fluidaudio" ]]; then
   export FLUIDAUDIO_BIN="$HOME/Developer/FluidAudio/.build/release/fluidaudio"
+fi
+
+ENGINE_ARGS=()
+if [[ "${SKIP_FLUIDAUDIO:-}" == "1" ]]; then
+  ENGINE_ARGS=(--engine whisper)
 fi
 
 echo "==== doctor ===="
@@ -27,15 +39,17 @@ run_one() {
   local label="$1"; shift
   echo "--- $label ---" | tee -a "$SMOKE_LOG"
   set +e
-  out=$(ut "$@" 2>"$ROOT/.smoke-err.txt")
+  out=$(ut "${ENGINE_ARGS[@]}" -q "$@" 2>"$ROOT/.smoke-err.txt")
   code=$?
   set -e
-  if [[ $code -eq 0 && -n "${out// }" ]]; then
+  # reject ggml/backend noise pretending to be a transcript
+  if [[ $code -eq 0 && -n "${out// }" ]] && ! echo "$out" | grep -q '^load_backend:'; then
     echo "PASS ($code) chars=${#out}" | tee -a "$SMOKE_LOG"
     echo "${out:0:200}" | tee -a "$SMOKE_LOG"
   else
     echo "FAIL ($code)" | tee -a "$SMOKE_LOG"
     tail -20 "$ROOT/.smoke-err.txt" | tee -a "$SMOKE_LOG"
+    echo "stdout head: ${out:0:120}" | tee -a "$SMOKE_LOG"
   fi
 }
 
