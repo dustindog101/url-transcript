@@ -1,23 +1,24 @@
 ---
 name: url-transcript
 description: >-
-  Use when the user sends a TikTok, YouTube, YouTube Shorts, or Instagram
-  Reel/post link; asks to transcribe, caption, or get the text/spoken words
-  from a video; pastes a share URL that can be transcribed; or says ut /
-  url-transcript / "what's this video saying". Prefer this over
-  youtube-transcript-api or ad-hoc Whisper scripts for those platforms.
+  Use when the user sends a TikTok/YouTube/Instagram URL, asks to transcribe it,
+  or asks what a short video is promoting / how BS the tools or claims are — run
+  Mac `ut` first, then a visual pass if the transcript is thin or they want
+  analysis.
 ---
+# URL → Transcript + short-video intel (`ut`)
 
-# URL → Transcript (`ut`)
+Turn a **TikTok / YouTube / Instagram** URL into a clean spoken transcript using the local Mac CLI **`ut`** (`url-transcript`). Prefer this over `youtube-transcript-api` or ad-hoc Whisper scripts.
 
-Turn a **TikTok / YouTube / Instagram** URL into a clean spoken transcript using the local Mac CLI **`ut`** (`url-transcript`). Do this automatically when the user drops a supported link (or clearly asks for a transcript of one).
+Also use this skill when the user drops a short-video link and asks what it is, what tools it promotes, or how trustworthy / "BS" the claims are — not only when they say "transcribe."
 
 ## Hard rules
 
-1. **Run on the user's Mac only** — project and binaries live there. Never invent a transcript; never pretend cloud ASR ran.
-2. **Default output:** clean transcript text the user can read. Progress belongs on stderr (`ut` already does this).
+1. **Run `ut` on the user's Mac only** — project and binaries live there. Never invent a transcript; never pretend cloud ASR ran.
+2. **Default for pure transcript asks:** clean transcript text. Progress stays on stderr (`ut` already does this).
 3. **Do not touch Codex** or unrelated agent skill trees when installing or updating this skill.
-4. Prefer **`ut`** over `youtube-transcript-api`, browser copy-paste, or one-off Whisper Python scripts for TikTok / YouTube / Instagram.
+4. Prefer **`ut`** for TikTok / YouTube / Instagram audio.
+5. **On-screen text matters.** Many TikToks put the real list on screen while music buries speech. If the ask needs tools/claims/judgment and the transcript is thin, you must also inspect the video frames (download → watch/describe), then answer from spoken + visual evidence. Never fabricate product names.
 
 ## Install location (Mac)
 
@@ -29,80 +30,69 @@ Repo: https://github.com/dustindog101/url-transcript
 
 Wrappers: `~/.local/bin/ut` and `~/.local/bin/url-transcript` (venv-backed).
 
-Ensure PATH includes `~/.local/bin` before calling:
-
 ```bash
 export PATH="$HOME/.local/bin:/opt/homebrew/bin:$PATH"
 ```
 
-## When to trigger (do it)
+## When to trigger
 
-- User message is (or contains) a TikTok, YouTube, Shorts, or Instagram Reel/post URL.
-- User asks to transcribe / caption / "what are they saying" / "get the text" for such a link.
-- User says `ut …` or `url-transcript …`.
+- TikTok, YouTube, Shorts, or Instagram Reel/post URL in the message.
+- Transcribe / caption / "what's this saying" / `ut` / `url-transcript`.
+- **Also:** "tell me about this," "what tools," "how BS," "is this legit," "review this," "what's the pitch" for those URLs.
 
 ### When NOT to use
 
-- Non-video links (articles, docs, GitHub) — use normal fetch/read tools.
-- Local audio/video **files** on disk — `ut` is URL-only today; use `whisper-cli` (or say so) instead of faking a URL.
-- User only wants a title/thumbnail/metadata, not spoken text.
+- Non-video links — normal fetch/read.
+- Local media files — `ut` is URL-only; use `whisper-cli` (or say so).
+- Metadata-only asks (title/thumbnail) with no need for speech or on-screen content.
 
 ## Decision tree
 
 ```
-Link or transcript ask?
-├─ TikTok / YouTube / IG URL → run ut (below)
-├─ Local media file → whisper-cli or ask; do not force ut
+Short-video URL?
+├─ Want spoken words only → ut (--json preferred for agents)
+├─ Want "about / tools / BS / review" → ut --json, THEN visual pass if needed
+├─ Local file → whisper-cli / watch file; do not fake a URL
 └─ Other → not this skill
 ```
 
+### When a visual pass is required
+
+Do a visual pass if **any** of these:
+
+- User asked about tools, products, legitimacy, ads, or "how BS."
+- `ut --json` duration is roughly **≥25s** but transcript is **very short** (outro-only, music-only, or under ~2–3 sentences).
+- Title/description mentions a list ("10 websites," "tools," etc.) but transcript does not name them.
+
+### Visual pass (Mac → work copy)
+
+1. Download with yt-dlp into an **allowed** Mac path (e.g. under `Desktop/school files/`), not `/tmp` (local-exec may block `/tmp`).
+2. Copy that file onto the assistant computer if needed, then **watch/describe the video** for on-screen names, URLs, and claims.
+3. Merge: spoken transcript + on-screen list. Prefer on-screen spelling for product names.
+4. Delete temp downloads when done unless the user asked to keep them.
+
 ## Commands
 
-### Health check (first time in a session, or on failure)
+### Health check
 
 ```bash
 export PATH="$HOME/.local/bin:/opt/homebrew/bin:$PATH"
 ut doctor
 ```
 
-Expect **Status: READY**. FluidAudio/Parakeet may show optional FAIL; whisper.cpp is a valid ready path.
+Expect **Status: READY**. FluidAudio/Parakeet may be optional FAIL; whisper.cpp is valid.
 
-### Transcribe (default)
+### Transcribe
 
 ```bash
 ut "URL"
-```
-
-Stdout = transcript only. Show that to the user (summarize only if they asked for a summary).
-
-### Instagram (cookies)
-
-IG often needs browser cookies. Prefer Firefox:
-
-```bash
-ut "https://www.instagram.com/reels/XXXX/" --cookies-from-browser firefox
-```
-
-If Firefox fails, try `chrome`. Do not ask the user to paste cookie files unless both fail.
-
-### Agent / structured
-
-```bash
 ut "URL" --json
-```
-
-### Force whisper (current default engine if Parakeet CLI not built)
-
-```bash
 ut --engine whisper "URL"
 ```
 
-### Save to disk (only if user asks)
+Instagram cookies: `--cookies-from-browser firefox` (then `chrome` if needed).
 
-```bash
-ut "URL" --save          # ./transcripts/
-ut "URL" -o /path/out.txt
-```
+Save only if asked: `ut "URL" --save` or `-o path`.
 
 ## Exit codes
 
@@ -114,40 +104,40 @@ ut "URL" -o /path/out.txt
 | 4 | ASR failed |
 | 5 | Missing deps |
 
-On non-zero: run `ut doctor`, read stderr, fix once (PATH, cookies, `--engine whisper`), then report the real error. Never fabricate spoken text.
+On failure: `ut doctor`, fix once, never invent spoken text.
 
 ## Engines
 
 | Priority | Engine | Notes |
 |----------|--------|-------|
-| 1 | FluidAudio Parakeet | Primary when `fluidaudio` / `FLUIDAUDIO_BIN` exists |
-| 2 | whisper.cpp | `brew` `whisper-cli` + local ggml model; auto WAV convert |
+| 1 | FluidAudio Parakeet | When `fluidaudio` / `FLUIDAUDIO_BIN` exists |
+| 2 | whisper.cpp | Auto WAV convert; current default if Parakeet CLI missing |
 
-Until Parakeet CLI is built on this Mac, use `--engine whisper` or rely on auto-fallback.
+## Local storage
 
-## Local storage (what hits disk)
+| What | Where |
+|------|--------|
+| Temp audio | `~/Library/Caches/url-transcript/` |
+| Whisper model | `~/Library/Application Support/openscreen/stt-models/whisper-ggml/` |
+| Parakeet models | `~/Library/Application Support/FluidAudio/Models/` |
+| Optional saved transcript | `./transcripts/` or `-o` |
 
-Yes — processing is **local on the Mac**, not a cloud transcription API.
-
-| What | Where | Notes |
-|------|--------|-------|
-| Temp / cached audio | `~/Library/Caches/url-transcript/` | Content-hashed; deleted after ASR unless `--keep-audio` |
-| Whisper model | `~/Library/Application Support/openscreen/stt-models/whisper-ggml/` | Already on disk |
-| Parakeet models | `~/Library/Application Support/FluidAudio/Models/` | VoiceInk / FluidAudio cache |
-| Optional saved transcript | `./transcripts/` or `-o` path | Only if user passes `--save` / `-o` |
-
-Network use: **yt-dlp** downloads media from TikTok / YouTube / Instagram. ASR itself runs locally (whisper.cpp / Parakeet).
+Network: yt-dlp download. ASR: local.
 
 ## Response shape
 
-1. Run `ut` (Mac shell).
-2. Lead with the transcript (or a short summary **only if asked**).
-3. One line of provenance if useful: platform + engine (from `--json` or stderr).
-4. If IG needed cookies, say so briefly.
+**Transcript-only ask:** lead with transcript; optional one-line platform + engine.
+
+**About / tools / BS ask:**
+1. What the video is (creator, format, sponsorship tags like `#manuspartner` if present).
+2. Ordered tool/product list with real URLs when shown.
+3. Straight BS/legit rating per tool (real product vs oversell).
+4. Note if speech was thin and on-screen text carried the list.
 
 ## Do not
 
 - Skip `ut` and invent dialogue.
-- Upload the audio to a third-party ASR unless the user explicitly asks.
-- Install this skill into Codex (`~/.codex/skills`) or other tools the user excluded.
-- Run the CLI on a Linux box that lacks the Mac install / models.
+- Answer "what tools" from a thin outro transcript alone when a visual pass is required.
+- Upload audio to third-party ASR unless the user asks.
+- Install into Codex or other excluded trees.
+- Run the CLI on a machine without the Mac install/models.
